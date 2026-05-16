@@ -1,150 +1,105 @@
-# httpAlive - URL Analysis Tool for Web Application Penetration
+# httpAlive v1.1.0 🚀
 
-[Tool Link](https://github.com/aashishtechsecurity/httpAlive/)
+**httpAlive** is a high-performance, asynchronous web reconnaissance tool designed for security researchers and bug bounty hunters. It efficiently probes lists of subdomains and URLs to identify alive targets, extract metadata, and fingerprint technology stacks.
 
 ---
 
 ![GitHub last commit](https://img.shields.io/github/last-commit/aashishtechsecurity/httpAlive) ![GitHub release (latest by date)](https://img.shields.io/github/v/release/aashishtechsecurity/httpAlive) [![GitHub license](https://img.shields.io/github/license/aashishtechsecurity/httpAlive)](https://github.com/aashishtechsecurity/httpAlive/blob/main/LICENSE) [![LinkedIn](https://img.shields.io/badge/LinkedIn-Connect-blue)](https://www.linkedin.com/in/aashishsec/)
 
-## Overview
+## 🛠️ Key Features
 
-- The "httpAlive" tool is designed to efficiently probe for alive subdomains and URLs from a provided list.
-- It includes features such as user-agent rotation, colorized output, multithreading, and a command-line interface (CLI) for ease of use.
-- Works in all platforms.
+- **Blazing Fast**: Built on `asyncio` and `httpx` for high-concurrency probing.
+- **Memory Efficient**: Uses a worker-pool architecture to handle millions of URLs with minimal RAM usage.
+- **Tech Fingerprinting**: Automatically detects CMS (WordPress, Drupal), Frameworks (React, Next.js), and Web Servers.
+- **Rich Metadata**: Extracts HTML Page Titles, resolves **IP Addresses**, and follows redirects.
+- **WAF Detection**: Identifies if a target is protected by Cloudflare, Akamai, AWS WAF, and more.
+- **Flexible Filtering**: Match or hide specific HTTP status codes (e.g., `-mc 200` or `-hc 404`).
+- **Professional Exports**: Save results in **Text**, **JSON**, or **CSV** formats.
+- **Custom Headers**: Pass custom cookies or authorization tokens via the `-H` flag.
 
-## Features
+---
 
-1. **User-Agent Rotation:**
-   - Randomly selects a user agent from a predefined list for each HTTP request to avoid detection.
+## 🏗️ Architecture & How It Works
 
-2. **Colorized Output:**
-   - Utilizes the `colorama` library to provide colorized and visually appealing output.
+### Asynchronous Worker Pool (Senior Design)
+Unlike traditional tools that create a thread for every URL, **httpAlive** utilizes a **Producer-Consumer pattern**:
 
-3. **Multithreading:**
-   - Implements multithreading using Python's `concurrent.futures` module for concurrent execution of HTTP requests.
+1.  **Producer**: Reads URLs from your input file line-by-line and feeds them into an `asyncio.Queue`.
+2.  **Worker Pool**: A fixed number of asynchronous workers (controlled by `--concurrency`) pull URLs from the queue.
+3.  **Connection Pooling**: Uses `httpx.AsyncClient` with custom limits to reuse TCP connections, reducing overhead and avoiding socket exhaustion.
 
-4. **HTTP Client:**
-   - Utilizes the `httpx` library as the HTTP client with SSL certificate verification disabled.
+This architecture ensures that the tool remains responsive and stable even when scanning massive datasets.
 
-5. **Command-Line Interface (CLI):**
-   - Accepts command-line arguments through the `argparse` module for easy configuration.
+---
 
-6. **Output File:**
-   - Saves results to an output file specified by the user (default: "httpAlive_output.txt").
+## 🚀 Installation
 
-7. **Banner Display:**
-   - Displays a colorful banner at the beginning with information about the tool, author, and GitHub profile.
+### Prerequisites
+- Python 3.8+
+- pip
 
-8. **Exception Handling:**
-   - Includes exception handling to gracefully handle interruptions, such as `KeyboardInterrupt`.
-     
-
-## Installation
-
-- Clone the repository to your local machine.
-
-### Method 1
-
+### Setup
 ```bash
-
 git clone https://github.com/aashishtechsecurity/httpAlive.git
-
 cd httpAlive
-
 pip install -r requirements.txt
-
 ```
 
-### Method 2
+---
 
+## 📖 Usage Guide
+
+### Basic Probing
 ```bash
-
-git clone https://github.com/aashishtechsecurity/httpAlive.git
-
-cd httpAlive
-
-pip install .
-
-
+python ./httpAlive/httpAlive.py -l subdomains.txt
 ```
 
-### httpAlive help:
-
-``` bash
-
-██╗░░██╗████████╗████████╗██████╗░░░░░░░░█████╗░██╗░░░░░██╗██╗░░░██╗███████╗
-██║░░██║╚══██╔══╝╚══██╔══╝██╔══██╗░░░░░░██╔══██╗██║░░░░░██║██║░░░██║██╔════╝
-███████║░░░██║░░░░░░██║░░░██████╔╝█████╗███████║██║░░░░░██║╚██╗░██╔╝█████╗░░
-██╔══██║░░░██║░░░░░░██║░░░██╔═══╝░╚════╝██╔══██║██║░░░░░██║░╚████╔╝░██╔══╝░░
-██║░░██║░░░██║░░░░░░██║░░░██║░░░░░░░░░░░██║░░██║███████╗██║░░╚██╔╝░░███████╗
-╚═╝░░╚═╝░░░╚═╝░░░░░░╚═╝░░░╚═╝░░░░░░░░░░░╚═╝░░╚═╝╚══════╝╚═╝░░░╚═╝░░░╚══════╝
-      
-        Author   : Bande Aashish💕
-                                              
-        Github   : https://github.com/aashishtechsecurity
-        
-        Version  : v1.1.0
-          
-        httpAlive is a tool designed to efficiently probe for alive subdomains and Urls from a provided list.
-
-
-usage: httpalive-Mark9.py [-h] -l list [-o output] [-c CONCURRENCY] [-t THREADS]
-
-options:
-
-  -h, --help            show this help message and exit.
-
-  -l list, --DomainList list
-                        [INFO]: List of Subdomains or URLs.
-
-  -o output, --output output
-                        [INFO]: File to save our output.
-
-  -c CONCURRENCY, --concurrency CONCURRENCY
-                        [INFO]: Concurrency level to make fast process.
-
-  -t THREADS, --threads THREADS
-                        [INFO]: Threading level to make fast process.
-
-```
-
-## Usage
-
-- Create a file containing that contains list of URLs or subdoamins or both and give to httpAlive. The output contains status codes and content length.
-
-- This python code will save the results of the analysis to a file named 'output.txt'.
-
-- Run the script with urls or subdomain list.
-
-### Note
-- Do not give more threads. It might cause Race Condition
-
-### Method 1
-
+### Advanced Filtering & Export
+Find only valid pages (200 OK) and save to JSON and CSV:
 ```bash
-
-python ./httpAlive/httpAlive -l subdomainList.txt
-
+python ./httpAlive/httpAlive.py -l list.txt -mc 200 -j results.json --csv results.csv
 ```
 
-### Method 2
-
+### Authenticated Scanning (Custom Headers)
 ```bash
-
-httpAlive -l subdomainList.txt
-
+python ./httpAlive/httpAlive.py -l list.txt -H "Cookie: session=123" -H "X-Forwarded-For: 127.0.0.1"
 ```
 
-## Tool Output
+### Full Options
+| Flag | Description | Default |
+|------|-------------|---------|
+| `-l, --list` | File containing list of URLs | **Required** |
+| `-c, --concurrency` | Number of concurrent workers | `50` |
+| `-o, --output` | Text output file | `httpAlive_output.txt` |
+| `-j, --json` | JSON output file | `None` |
+| `--csv` | CSV output file | `None` |
+| `-mc, --match-code` | Match specific status codes | `All` |
+| `-hc, --hide-code` | Hide specific status codes | `None` |
+| `-H, --header` | Add custom header (can use multiple) | `None` |
+| `-t, --timeout` | Request timeout in seconds | `10` |
 
-![image](https://github.com/aashishtechsecurity/httpAlive/assets/65489287/c15966b3-9795-4e30-b33a-a30b42438614)
+---
 
-## Contributing
+## 🔍 Technology & WAF Detection
+The tool identifies stacks and protection layers using:
+- **WAFs**: Cloudflare, Akamai, AWS WAF, Imperva, Sucuri, F5 BigIP.
+- **CMS**: WordPress, Shopify, Drupal, Joomla.
+- **Frameworks**: React, Angular, Vue.js, Next.js, Nuxt.js.
+- **Infrastructure**: Nginx, Apache, IIS, LiteSpeed.
 
-- Contributions are welcome!
-  
-- If you have any suggestions, bug reports, or feature requests, please open an issue or submit a pull request.
+---
 
+## 🛡️ License
+Distributed under the MIT License. See `LICENSE` for more information.
 
-![image](https://github.com/aashish36/JSScanner/assets/65489287/70f7e3a8-e95f-429b-9433-89087daad721)
+## 🤝 Contributing
+Contributions are what make the open-source community such an amazing place to learn, inspire, and create. Any contributions you make are **greatly appreciated**.
 
+1. Fork the Project
+2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the Branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
+
+---
+**Author**: [Bande Aashish](https://github.com/aashishtechsecurity)

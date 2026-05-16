@@ -5,6 +5,8 @@ import random
 import argparse
 import sys
 import time
+import csv
+import socket
 from datetime import datetime
 import re
 import json
@@ -114,13 +116,21 @@ def detect_tech(response: httpx.Response) -> List[str]:
         "Vue.js": {"body": "vue"},
         "Laravel": {"cookie": "laravel_session"},
         "Java/JSP": {"cookie": "jsessionid"},
+        # WAF Signatures
+        "WAF:Cloudflare": {"header": ("cf-ray", "")},
+        "WAF:Akamai": {"header": ("x-akamai-transformed", "")},
+        "WAF:Imperva": {"header": ("x-iinfo", ""), "cookie": "visid_incap"},
+        "WAF:Sucuri": {"header": ("x-sucuri-id", "")},
+        "WAF:AWS-WAF": {"header": ("x-amz-cf-id", "")},
+        "WAF:F5-BigIP": {"header": ("x-wa-info", ""), "cookie": "bigipserver"},
     }
 
     for tech, sig in signatures.items():
         if "header" in sig:
             h_key, h_val = sig["header"]
-            if h_val in headers.get(h_key, '').lower():
-                detected.append(tech)
+            if h_key in headers:
+                if not h_val or h_val in headers.get(h_key, '').lower():
+                    detected.append(tech)
         if "body" in sig and sig["body"] in html:
             detected.append(tech)
         if "cookie" in sig and sig["cookie"] in cookies:
@@ -128,20 +138,41 @@ def detect_tech(response: httpx.Response) -> List[str]:
     
     return sorted(list(set(detected)))
 
+async def get_ip(hostname: str) -> str:
+    """Resolve hostname to IP address asynchronously."""
+    try:
+        # Extract hostname if URL is passed
+        if "://" in hostname:
+            hostname = hostname.split("://")[1].split("/")[0].split(":")[0]
+        
+        loop = asyncio.get_event_loop()
+        info = await loop.getaddrinfo(hostname, None, family=socket.AF_INET)
+        if info:
+            return info[0][4][0]
+    except Exception:
+        pass
+    return "N/A"
+
 async def probe_url(
     url: str, 
     client: httpx.AsyncClient, 
     output_file: Optional[str], 
     json_output: Optional[str],
+    csv_output: Optional[str],
     progress, 
     task_id,
     filter_status: Optional[Set[int]] = None,
-    hide_status: Optional[Set[int]] = None
+    hide_status: Optional[Set[int]] = None,
+    custom_headers: Optional[Dict[str, str]] = None
 ) -> None:
     target = url if url.startswith(('http://', 'https://')) else f"http://{url}"
+    
     headers = {"User-Agent": random.choice(USER_AGENTS)}
+    if custom_headers:
+        headers.update(custom_headers)
     
     try:
+        ip_address = await get_ip(url)
         response = await client.get(target, headers=headers, follow_redirects=True)
         status = response.status_code
         
@@ -152,7 +183,16 @@ async def probe_url(
         server = response.headers.get('Server', 'N/A')
         title = extract_title(response.text)
         tech = detect_tech(response)
-        tech_str = f"[bold magenta][{','.join(tech)}][/]" if tech else ""
+        
+        # Color coding tech vs WAF
+        tech_display = []
+        for t in tech:
+            if t.startswith("WAF:"):
+                tech_display.append(f"[bold red]{t}[/]")
+            else:
+                tech_display.append(f"[bold magenta]{t}[/]")
+        
+        tech_str = f"[{','.join(tech_display)}]" if tech_display else ""
         
         redirect_info = ""
         if len(response.history) > 0:
@@ -160,19 +200,20 @@ async def probe_url(
 
         status_style = "status_200" if 200 <= status < 300 else "status_300" if 300 <= status < 400 else "status_400"
         
-        result_text = f"[{status_style}](Status: {status})[/] --[Size: {size}]--[Server: {server}]--[Title: {title}] {tech_str}---> [url]{url}[/url]{redirect_info}"
+        result_text = f"[{status_style}](Status: {status})[/] --[IP: {ip_address}]--[Size: {size}]--[Server: {server}]--[Title: {title}] {tech_str}---> [url]{url}[/url]{redirect_info}"
         console.print(result_text)
         
         # Save to Text
         if output_file:
             with open(output_file, 'a', encoding='utf-8') as f:
                 tech_log = f"[{','.join(tech)}]" if tech else ""
-                f.write(f"(Status: {status}) --[Size: {size}]--[Server: {server}]--[Title: {title}] {tech_log}---> {url}{' -> ' + str(response.url) if redirect_info else ''}\n")
+                f.write(f"(Status: {status}) --[IP: {ip_address}]--[Size: {size}]--[Server: {server}]--[Title: {title}] {tech_log}---> {url}{' -> ' + str(response.url) if redirect_info else ''}\n")
         
         # Save to JSON
         if json_output:
             result_data = {
                 "url": url,
+                "ip": ip_address,
                 "status": status,
                 "size": size,
                 "server": server,
@@ -182,27 +223,52 @@ async def probe_url(
             }
             with open(json_output, 'a', encoding='utf-8') as f:
                 f.write(json.dumps(result_data) + "\n")
+        
+        # Save to CSV
+        if csv_output:
+            with open(csv_output, 'a', encoding='utf-8', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow([url, ip_address, status, size, server, title, ",".join(tech), str(response.url)])
                 
     except Exception:
         pass
     finally:
         progress.update(task_id, advance=1)
 
+async def worker(queue, client, args, progress, task_id, filter_status, hide_status, custom_headers):
+    """Worker task that processes URLs from the queue."""
+    while True:
+        url = await queue.get()
+        try:
+            await probe_url(url, client, args.output, args.json, args.csv, progress, task_id, filter_status, hide_status, custom_headers)
+        finally:
+            queue.task_done()
+
 async def main():
     parser = argparse.ArgumentParser(description="httpAlive: Efficiently probe for alive subdomains and URLs.")
     parser.add_argument('-l', '--list', required=True, help="File containing list of subdomains or URLs.")
     parser.add_argument('-o', '--output', default="httpAlive_output.txt", help="File to save text results.")
     parser.add_argument('-j', '--json', help="File to save JSON results.")
+    parser.add_argument('--csv', help="File to save CSV results.")
     parser.add_argument('-c', '--concurrency', type=int, default=50, help="Concurrency level (default: 50).")
     parser.add_argument('-t', '--timeout', type=int, default=10, help="Timeout per request (default: 10s).")
     parser.add_argument('-mc', '--match-code', help="Match specific status codes (e.g., 200,301).")
     parser.add_argument('-hc', '--hide-code', help="Hide specific status codes (e.g., 404,403).")
+    parser.add_argument('-H', '--header', action='append', help="Custom header (e.g., 'Cookie: session=123'). Can be used multiple times.")
     
     args = parser.parse_args()
 
     # Parse status codes
     filter_status = set(int(c.strip()) for c in args.match_code.split(',')) if args.match_code else None
     hide_status = set(int(c.strip()) for c in args.hide_code.split(',')) if args.hide_code else None
+
+    # Parse custom headers
+    custom_headers = {}
+    if args.header:
+        for h in args.header:
+            if ':' in h:
+                key, val = h.split(':', 1)
+                custom_headers[key.strip()] = val.strip()
 
     console.print(get_banner())
     await check_version()
@@ -225,7 +291,11 @@ async def main():
             f.write(f"# httpAlive Scan - {datetime.now()}\n")
     if args.json:
         with open(args.json, 'w', encoding='utf-8') as f:
-            pass # Clear JSON file
+            pass
+    if args.csv:
+        with open(args.csv, 'w', encoding='utf-8', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(["URL", "IP Address", "Status", "Size", "Server", "Title", "Tech", "Final URL"])
 
     limits = httpx.Limits(max_keepalive_connections=20, max_connections=args.concurrency)
     
@@ -242,20 +312,25 @@ async def main():
             
             task_id = progress.add_task("[cyan]Probing URLs...", total=len(urls))
             
-            # Using semaphore to control concurrency
-            semaphore = asyncio.Semaphore(args.concurrency)
+            queue = asyncio.Queue()
+            for url in urls:
+                queue.put_nowait(url)
             
-            async def bounded_probe(url):
-                async with semaphore:
-                    await probe_url(url, client, args.output, args.json, progress, task_id, filter_status, hide_status)
+            # Start workers
+            workers = [
+                asyncio.create_task(worker(queue, client, args, progress, task_id, filter_status, hide_status, custom_headers))
+                for _ in range(args.concurrency)
+            ]
             
-            tasks = [bounded_probe(url) for url in urls]
-            await asyncio.gather(*tasks)
+            await queue.join()
+            for w in workers:
+                w.cancel()
 
     console.print("-" * 60)
     output_msg = f"[bold success][+][/bold success] Scan complete."
     if args.output: output_msg += f" Text: [bold white]{args.output}[/bold white]"
     if args.json: output_msg += f" JSON: [bold white]{args.json}[/bold white]"
+    if args.csv: output_msg += f" CSV: [bold white]{args.csv}[/bold white]"
     console.print(output_msg)
     console.print(f"[bold success][+][/bold success] Finished at: [bold white]{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}[/bold white]")
 
