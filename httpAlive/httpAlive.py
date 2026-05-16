@@ -1,284 +1,206 @@
 #!/usr/bin/python3
 
-import requests
-
-import colorama
-
+import asyncio
 import random
-
 import argparse
-
-import concurrent.futures
+import sys
+import time
+from datetime import datetime
+import re
+from typing import List, Optional, Set
 
 import httpx
+from rich.console import Console
+from rich.panel import Panel
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, MofNCompleteColumn, TimeElapsedColumn
+from rich.theme import Theme
+from rich.table import Table
 
-from datetime import datetime
+# Custom Theme for Security Tooling
+custom_theme = Theme({
+    "info": "cyan",
+    "warning": "yellow",
+    "error": "red",
+    "success": "green",
+    "status_200": "bold green",
+    "status_300": "bold yellow",
+    "status_400": "bold red",
+    "status_500": "bold magenta",
+    "url": "underline blue",
+})
 
-from colorama import Fore, Style
+console = Console(theme=custom_theme)
 
-colorama.init(autoreset=True)
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1",
+]
 
-green = Fore.GREEN
+VERSION = "v1.1.0"
 
-magenta = Fore.MAGENTA
+def get_banner():
+    banner_text = f"""
+[bold cyan]██╗░░██╗████████╗████████╗██████╗░░░░░░░░█████╗░██╗░░░░░██╗██╗░░░██╗███████╗[/bold cyan]
+[bold cyan]██║░░██║╚══██╔══╝╚══██╔══╝██╔══██╗░░░░░░██╔══██╗██║░░░░░██║██║░░░██║██╔════╝[/bold cyan]
+[bold cyan]███████║░░░██║░░░░░░██║░░░██████╔╝█████╗███████║██║░░░░░██║╚██╗░██╔╝█████╗░░[/bold cyan]
+[bold cyan]██╔══██║░░░██║░░░░░░██║░░░██╔═══╝░╚════╝██╔══██║██║░░░░░██║░╚████╔╝░██╔══╝░░[/bold cyan]
+[bold cyan]██║░░██║░░░██║░░░░░░██║░░░██║░░░░░░░░░░░██║░░██║███████╗██║░░╚██╔╝░░███████╗[/bold cyan]
+[bold cyan]╚═╝░░╚═╝░░░╚═╝░░░░░░╚═╝░░░╚═╝░░░░░░░░░░░╚═╝░░╚═╝╚══════╝╚═╝░░░╚═╝░░░╚══════╝[/bold cyan]
+                                                                        
+[bold yellow]Author   :[/bold yellow] [bold white]Bande Aashish💕[/bold white]
+[bold yellow]Github   :[/bold yellow] [blue]https://github.com/aashishtechsecurity[/blue]
+[bold yellow]Version  :[/bold yellow] [bold green]{VERSION}[/bold green]
+    """
+    return Panel(banner_text, border_style="cyan", expand=False)
 
-cyan = Fore.CYAN
+async def check_version():
+    url = "https://api.github.com/repos/aashishsec/httpAlive/releases/latest"
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            response = await client.get(url)
+            if response.status_code == 200:
+                data = response.json()
+                latest = data.get('name', '')
+                if latest == VERSION:
+                    console.print(f"[info]●[/info] [bold white]Status:[/bold white] [success]Up to date ({VERSION})[/success]")
+                else:
+                    console.print(f"[info]●[/info] [bold white]Status:[/bold white] [warning]Update available: {latest}[/warning]")
+    except Exception:
+        pass
 
-mixed = Fore.RED + Fore.BLUE
+def extract_title(html: str) -> str:
+    """Extract page title using regex to avoid heavy dependencies."""
+    match = re.search(r'<title>(.*?)</title>', html, re.IGNORECASE | re.DOTALL)
+    if match:
+        title = match.group(1).strip()
+        return (title[:50] + '...') if len(title) > 50 else title
+    return "N/A"
 
-red = Fore.RED
-
-blue = Fore.BLUE
-
-yellow = Fore.YELLOW
-
-white = Fore.WHITE
-
-reset = Style.RESET_ALL
-
-bold = Style.BRIGHT
-
-colors = [magenta,cyan,mixed,red,blue,yellow, white]
-
-random_color = random.choice(colors)
-
-USER_AGENT  = [
-        
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/42.0.2311.135 Safari/537.36 Edge/12.246",
-
-    "Mozilla/5.0 (X11; CrOS x86_64 8172.45.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.64 Safari/537.36",
-
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_2) AppleWebKit/601.3.9 (KHTML, like Gecko) Version/9.0.2 Safari/601.3.9",
-
-    "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/47.0.2526.111 Safari/537.36",
-
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/99.0.4844.84 Safari/537.36",
-
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.75 Safari/537.36 Edg/99.0.1150.36",
-
-    "Mozilla/5.0 (Windows NT 10.0; WOW64; Trident/7.0; rv:11.0) like Gecko",
-
-    "Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.75 Safari/537.36",
-
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:99.0) Gecko/20100101 Firefox/99.0",
-
-     ]
-     
-
-random_user_agent = random.choice(USER_AGENT)
-
-parser=argparse.ArgumentParser(description=f"{bold}{random_color}httpAlive is a tool designed to efficiently probe for alive subdomains and Urls from a provided list.")
-
-parser.add_argument('-l','--DomainList',metavar='list',type=str,required=True,help=f"[{bold}{random_color}INFO]: {bold}{random_color}List of Subdomains or URLs.")
-
-parser.add_argument('-o','--output',metavar='output',type=str,default="httpAlive_output.txt",required=False,help=f"[{bold}{random_color}INFO]: {bold}{random_color}File to save our output.")
-
-parser.add_argument("-c", "--concurrency", help=f"[{bold}{random_color}INFO{random_color}]: {bold}{random_color}Concurrency level to make fast process.", type=int, default=5)
-
-parser.add_argument("-t", "--threads", help=f"[{bold}INFO{random_color}]: {random_color}{random_color}Threading level to make fast process.", type=int, default=5)
-
-args=parser.parse_args()
-
-DominList=args.DomainList
-
-output=args.output
-
-concurrency=args.concurrency
-
-threads=args.threads
-
-global_output=[]
-
-global_urls=[]
-        
-
-def banner():
-
-    print(f'''{bold}{random_color}
-
-██╗░░██╗████████╗████████╗██████╗░░░░░░░░█████╗░██╗░░░░░██╗██╗░░░██╗███████╗
-██║░░██║╚══██╔══╝╚══██╔══╝██╔══██╗░░░░░░██╔══██╗██║░░░░░██║██║░░░██║██╔════╝
-███████║░░░██║░░░░░░██║░░░██████╔╝█████╗███████║██║░░░░░██║╚██╗░██╔╝█████╗░░
-██╔══██║░░░██║░░░░░░██║░░░██╔═══╝░╚════╝██╔══██║██║░░░░░██║░╚████╔╝░██╔══╝░░
-██║░░██║░░░██║░░░░░░██║░░░██║░░░░░░░░░░░██║░░██║███████╗██║░░╚██╔╝░░███████╗
-╚═╝░░╚═╝░░░╚═╝░░░░░░╚═╝░░░╚═╝░░░░░░░░░░░╚═╝░░╚═╝╚══════╝╚═╝░░░╚═╝░░░╚══════╝
-      
-        Author   : Aashish💕💕  
-                                              
-        Github   : https://github.com/aashishsec
-          
-        httpAlive is a tool designed to efficiently probe for alive subdomains and Urls from a provided list.
-          
-      ''')
-    print("-" * 80)
-
-    checking_vesion()
-
-    print(f"{bold}{random_color}httpAlive starting at {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
-
-    print("-" * 80)
-   
-    print(f"{bold}{random_color}[*] Threads".ljust(20, " "), ":", threads)
-
-    print(f"{bold}{random_color}[*] Concurrency".ljust(20, " "), ":",concurrency)
-
-def checking_vesion():
-
-    version = "v1.0.2"
+async def probe_url(
+    url: str, 
+    client: httpx.AsyncClient, 
+    output_file: Optional[str], 
+    progress, 
+    task_id,
+    filter_status: Optional[Set[int]] = None,
+    hide_status: Optional[Set[int]] = None
+) -> None:
+    # Ensure URL has protocol
+    target = url if url.startswith(('http://', 'https://')) else f"http://{url}"
     
-    url = f"https://api.github.com/repos/aashishsec/httpAlive/releases/latest"
+    headers = {"User-Agent": random.choice(USER_AGENTS)}
     
     try:
-            
-         response =  requests.get(url, timeout=10)
-          
-         if response.status_code == 200:
-            
-            data = response.json()
-                
-            latest = data.get('name')
-            
-            if latest == version:
-                
-                    message = "latest"
-                
-                    print(f"[{blue}Version{reset}]: {bold}{white}httpAlive current version {version} ({green}{message}{reset})")
-                
-                    t.sleep(1)
-                
-            else:
-                
-                    message ="outdated"
-                
-                    print(f"[{blue}Version{reset}]: {bold}{white}httpAlive current version {version} ({red}{message}{reset})")
-
-            
-    except KeyboardInterrupt as e:
+        # We don't follow redirects here so we can see the hop info, 
+        # but for simplicity in "is it alive", following is fine.
+        # Let's track redirects if they happen.
+        response = await client.get(target, headers=headers, follow_redirects=True)
+        status = response.status_code
         
-            print(f"[{blue}INFO{random_color}]: httpAlive says BYE!")
+        # Filtering logic
+        if filter_status and status not in filter_status:
+            return
+        if hide_status and status in hide_status:
+            return
+
+        size = response.headers.get('Content-Length', len(response.content))
+        server = response.headers.get('Server', 'N/A')
+        title = extract_title(response.text)
         
-            exit()
+        # Track if it was a redirect
+        redirect_info = ""
+        if len(response.history) > 0:
+            final_url = str(response.url)
+            redirect_info = f" [yellow]→[/][italic white] {final_url}[/]"
+
+        # Color coding status codes
+        status_style = "status_200" if 200 <= status < 300 else "status_300" if 300 <= status < 400 else "status_400"
+        
+        result_text = f"[{status_style}](Status: {status})[/] --[Size: {size}]--[Server: {server}]--[Title: {title}]---> [url]{url}[/url]{redirect_info}"
+        console.print(result_text)
+        
+        if output_file:
+            with open(output_file, 'a', encoding='utf-8') as f:
+                f.write(f"(Status: {status}) --[Size: {size}]--[Server: {server}]--[Title: {title}]---> {url}{' -> ' + str(response.url) if redirect_info else ''}\n")
                 
-    except Exception as e:
-
-           pass
-
-
-def httpAlive(subdomain):
-
-    global global_output
-
-    if subdomain[0:5]=="https" or subdomain[0:7]=="http://":
-                  
-            url=subdomain
-
-    else:
-                  
-            url="https://{}".format(subdomain)
-    
-    header={"User-Agent": random_user_agent}
-
-    try:
-            with httpx.Client(verify=False,timeout=10,follow_redirects=True,headers=header) as client:
-
-                  request=client.get(url)
-
-            statusCode=request.status_code
-
-            content_length = request.headers.get('Content-Length')
-
-            if statusCode== 200:
-
-               if content_length is not None:
-                   
-                   print(f"{green}(Status: {statusCode}) --[Size: {content_length}]---> {subdomain}")
-
-                   global_output.append(f"(Status: {statusCode}) --[Size: {content_length}]---> {subdomain}\n")
-
-               else:
-                   
-                   print(f"{green}(Status: {statusCode}) --[Size: {len(request.content)}]---> {subdomain}")
-
-                   global_output.append(f"(Status: {statusCode}) --[Size: {len(request.content)}]---> {subdomain}\n")
-
-            else:
-               
-                print(f"{random_color}(Status: {statusCode}) --[Size: {len(request.content)}]---> {subdomain}")
-
-                global_output.append(f"(Status: {statusCode}) --[Size: {len(request.content)}]---> {subdomain}\n")
-                
-    except KeyboardInterrupt as e:
-        
-            print(f"[{blue}INFO{random_color}]: httpAlive says BYE!")
-        
-            exit()
-                
-    except Exception as e:
-        
-           pass
-
-def saveOutput(output):
-
-    with open(output, 'w') as file:
-        
-        file.writelines(global_output)
-
-
-def threading(urls):
-    
-    try:
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency*threads) as executor:
-            
-           futures = [executor.submit(httpAlive, url) for url in urls]
-           
-        concurrent.futures.wait(futures)
-           
-    except KeyboardInterrupt as e:
-        
-        print(f"[{bold}INFO{random_color}]: httpAlive says BYE!")
-        
-        exit()
-
-    except Exception as e:
-        
+    except (httpx.TimeoutException, httpx.ConnectError):
         pass 
+    except Exception as e:
+        # Uncomment for debugging: console.print(f"[error]Error probing {url}: {str(e)}[/error]")
+        pass
+    finally:
+        progress.update(task_id, advance=1)
 
+async def main():
+    parser = argparse.ArgumentParser(description="httpAlive: Efficiently probe for alive subdomains and URLs.")
+    parser.add_argument('-l', '--list', required=True, help="File containing list of subdomains or URLs.")
+    parser.add_argument('-o', '--output', default="httpAlive_output.txt", help="File to save results.")
+    parser.add_argument('-c', '--concurrency', type=int, default=50, help="Concurrency level (default: 50).")
+    parser.add_argument('-t', '--timeout', type=int, default=10, help="Timeout per request (default: 10s).")
+    parser.add_argument('-mc', '--match-code', help="Match specific status codes (e.g., 200,301).")
+    parser.add_argument('-hc', '--hide-code', help="Hide specific status codes (e.g., 404,403).")
+    
+    args = parser.parse_args()
 
-def main():
+    # Parse status codes
+    filter_status = set(int(c.strip()) for c in args.match_code.split(',')) if args.match_code else None
+    hide_status = set(int(c.strip()) for c in args.hide_code.split(',')) if args.hide_code else None
 
-    banner()
-
-    global global_urls
+    console.print(get_banner())
+    await check_version()
     
     try:
-        
-        with open(DominList,"r") as subdomains:
-       
-           subdomain=subdomains.read().splitlines()
-        
-           for url in subdomain:
-          
-               global_urls.append(url)
+        with open(args.list, 'r') as f:
+            urls = [line.strip() for line in f if line.strip()]
+    except FileNotFoundError:
+        console.print(f"[error]Error: File '{args.list}' not found.[/error]")
+        sys.exit(1)
 
-        print(f"{bold}{random_color}[*] No.of Words".ljust(20, " "), ":", len(global_urls))
+    console.print(f"\n[bold info][*][/bold info] Starting at: [bold white]{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}[/bold white]")
+    console.print(f"[bold info][*][/bold info] Target count: [bold yellow]{len(urls)}[/bold yellow]")
+    console.print(f"[bold info][*][/bold info] Concurrency : [bold yellow]{args.concurrency}[/bold yellow]\n")
+    console.print("-" * 60)
 
-        print("-" * 80)
+    # Clear output file if it exists or create new
+    if args.output:
+        with open(args.output, 'w', encoding='utf-8') as f:
+            f.write(f"# httpAlive Scan - {datetime.now()}\n")
 
-        threading(global_urls)
+    limits = httpx.Limits(max_keepalive_connections=20, max_connections=args.concurrency)
+    
+    async with httpx.AsyncClient(verify=False, timeout=args.timeout, limits=limits) as client:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(bar_width=None),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+            console=console,
+            expand=True
+        ) as progress:
+            
+            task_id = progress.add_task("[cyan]Probing URLs...", total=len(urls))
+            
+            # Using semaphore to control concurrency
+            semaphore = asyncio.Semaphore(args.concurrency)
+            
+            async def bounded_probe(url):
+                async with semaphore:
+                    await probe_url(url, client, args.output, progress, task_id, filter_status, hide_status)
+            
+            tasks = [bounded_probe(url) for url in urls]
+            await asyncio.gather(*tasks)
 
-        saveOutput(output) 
-           
-    except KeyboardInterrupt as e:
-        
-        print(f"[{blue}INFO{random_color}]: httpAlive says BYE!")
-        
-        exit()
-
-    except Exception as e:
-        
-        pass 
+    console.print("-" * 60)
+    console.print(f"[bold success][+][/bold success] Scan complete. Results saved to: [bold white]{args.output}[/bold white]")
+    console.print(f"[bold success][+][/bold success] Finished at: [bold white]{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}[/bold white]")
 
 if __name__ == "__main__":
-
-    main()
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        console.print("\n[bold red][!] Interrupted by user. Exiting...[/bold red]")
+        sys.exit(0)

@@ -2,3 +2,4 @@ requests
 httpx
 colorama
 argparse
+rich
