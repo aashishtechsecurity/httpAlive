@@ -1,10 +1,10 @@
-# httpAlive - URL Analysis Tool for Web Application Penetration Test
+# httpAlive - URL Analysis Tool for Web Application Penetration
 
-[Tool Link](https://github.com/aashishsec/httpAlive/)
+[Tool Link](https://github.com/aashishtechsecurity/httpAlive/)
 
 ---
 
-![GitHub last commit](https://img.shields.io/github/last-commit/aashishsec/httpAlive) ![GitHub release (latest by date)](https://img.shields.io/github/v/release/aashishsec/httpAlive) [![GitHub license](https://img.shields.io/github/license/aashishsec/httpAlive)](https://github.com/aashishsec/httpAlive/blob/main/LICENSE) [![LinkedIn](https://img.shields.io/badge/LinkedIn-Connect-blue)](https://www.linkedin.com/in/aashishsec/)
+![GitHub last commit](https://img.shields.io/github/last-commit/aashishtechsecurity/httpAlive) ![GitHub release (latest by date)](https://img.shields.io/github/v/release/aashishtechsecurity/httpAlive) [![GitHub license](https://img.shields.io/github/license/aashishtechsecurity/httpAlive)](https://github.com/aashishtechsecurity/httpAlive/blob/main/LICENSE) [![LinkedIn](https://img.shields.io/badge/LinkedIn-Connect-blue)](https://www.linkedin.com/in/aashishsec/)
 
 ## Overview
 
@@ -47,7 +47,7 @@
 
 ```bash
 
-git clone https://github.com/aashish36/httpAlive.git
+git clone https://github.com/aashishtechsecurity/httpAlive.git
 
 cd httpAlive
 
@@ -59,7 +59,7 @@ pip install -r requirements.txt
 
 ```bash
 
-git clone https://github.com/aashish36/httpAlive.git
+git clone https://github.com/aashishtechsecurity/httpAlive.git
 
 cd httpAlive
 
@@ -79,9 +79,11 @@ pip install .
 ██║░░██║░░░██║░░░░░░██║░░░██║░░░░░░░░░░░██║░░██║███████╗██║░░╚██╔╝░░███████╗
 ╚═╝░░╚═╝░░░╚═╝░░░░░░╚═╝░░░╚═╝░░░░░░░░░░░╚═╝░░╚═╝╚══════╝╚═╝░░░╚═╝░░░╚══════╝
       
-        Author   : Aashish💕💕  
+        Author   : Bande Aashish💕
                                               
-        Github   : https://github.com/aashishsec
+        Github   : https://github.com/aashishtechsecurity
+        
+        Version  : v1.1.0
           
         httpAlive is a tool designed to efficiently probe for alive subdomains and Urls from a provided list.
 
@@ -135,7 +137,7 @@ httpAlive -l subdomainList.txt
 
 ## Tool Output
 
-![image](https://github.com/aashishsec/httpAlive/assets/65489287/c15966b3-9795-4e30-b33a-a30b42438614)
+![image](https://github.com/aashishtechsecurity/httpAlive/assets/65489287/c15966b3-9795-4e30-b33a-a30b42438614)
 
 ## Contributing
 

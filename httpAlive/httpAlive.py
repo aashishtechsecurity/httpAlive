@@ -57,7 +57,7 @@ def get_banner():
     return Panel(banner_text, border_style="cyan", expand=False)
 
 async def check_version():
-    url = "https://api.github.com/repos/aashishsec/httpAlive/releases/latest"
+    url = "https://api.github.com/repos/aashishtechsecurity/httpAlive/releases/latest"
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             response = await client.get(url)
@@ -76,8 +76,53 @@ def extract_title(html: str) -> str:
     match = re.search(r'<title>(.*?)</title>', html, re.IGNORECASE | re.DOTALL)
     if match:
         title = match.group(1).strip()
+        # Clean up some common issues like double spaces or newlines in title
+        title = " ".join(title.split())
         return (title[:50] + '...') if len(title) > 50 else title
     return "N/A"
+
+def detect_tech(response: httpx.Response) -> List[str]:
+    """Basic fingerprinting for web technologies."""
+    detected = []
+    headers = response.headers
+    html = response.text.lower()
+    cookies = str(response.cookies).lower()
+    
+    # 1. Header Analysis
+    server = headers.get('Server', '').lower()
+    if 'nginx' in server: detected.append("Nginx")
+    elif 'apache' in server: detected.append("Apache")
+    elif 'litespeed' in server: detected.append("LiteSpeed")
+    elif 'microsoft-iis' in server: detected.append("IIS")
+    elif 'cloudflare' in server: detected.append("Cloudflare")
+    
+    powered_by = headers.get('X-Powered-By', '').lower()
+    if 'php' in powered_by: detected.append("PHP")
+    elif 'asp.net' in powered_by: detected.append("ASP.NET")
+    elif 'express' in powered_by: detected.append("Express.js")
+    
+    # 2. CMS & Platform Patterns
+    if 'wp-content' in html or 'wordpress' in html: detected.append("WordPress")
+    if 'drupal' in html: detected.append("Drupal")
+    if 'joomla' in html: detected.append("Joomla")
+    if 'shopify' in html: detected.append("Shopify")
+    if 'squarespace' in html: detected.append("Squarespace")
+    
+    # 3. Frontend Frameworks
+    if '_next/static' in html: detected.append("Next.js")
+    if 'nuxt' in html: detected.append("Nuxt.js")
+    if 'react' in html: detected.append("React")
+    if 'angular' in html: detected.append("Angular")
+    if 'vue' in html: detected.append("Vue.js")
+    
+    # 4. Miscellaneous
+    if 'drupal' in headers.get('X-Generator', '').lower(): detected.append("Drupal")
+    if 'laravel_session' in cookies: detected.append("Laravel")
+    if 'phpsessid' in cookies: detected.append("PHP")
+    if 'jsessionid' in cookies: detected.append("Java/JSP")
+    
+    # Deduplicate and limit
+    return sorted(list(set(detected)))
 
 async def probe_url(
     url: str, 
@@ -109,6 +154,8 @@ async def probe_url(
         size = response.headers.get('Content-Length', len(response.content))
         server = response.headers.get('Server', 'N/A')
         title = extract_title(response.text)
+        tech = detect_tech(response)
+        tech_str = f"[bold magenta][{','.join(tech)}][/]" if tech else ""
         
         # Track if it was a redirect
         redirect_info = ""
@@ -119,12 +166,13 @@ async def probe_url(
         # Color coding status codes
         status_style = "status_200" if 200 <= status < 300 else "status_300" if 300 <= status < 400 else "status_400"
         
-        result_text = f"[{status_style}](Status: {status})[/] --[Size: {size}]--[Server: {server}]--[Title: {title}]---> [url]{url}[/url]{redirect_info}"
+        result_text = f"[{status_style}](Status: {status})[/] --[Size: {size}]--[Server: {server}]--[Title: {title}] {tech_str}---> [url]{url}[/url]{redirect_info}"
         console.print(result_text)
         
         if output_file:
             with open(output_file, 'a', encoding='utf-8') as f:
-                f.write(f"(Status: {status}) --[Size: {size}]--[Server: {server}]--[Title: {title}]---> {url}{' -> ' + str(response.url) if redirect_info else ''}\n")
+                tech_log = f"[{','.join(tech)}]" if tech else ""
+                f.write(f"(Status: {status}) --[Size: {size}]--[Server: {server}]--[Title: {title}] {tech_log}---> {url}{' -> ' + str(response.url) if redirect_info else ''}\n")
                 
     except (httpx.TimeoutException, httpx.ConnectError):
         pass 

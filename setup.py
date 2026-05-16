@@ -5,7 +5,7 @@ setup(
     version='1.1.0',
     description='HttpAlive is a web probing tool designed for discovering alive subdomains and URLs.',
     author='Bande Aashish',
-    url='https://github.com/aashishsec/httpAlive',
+    url='https://github.com/aashishtechsecurity/httpAlive',
     packages=find_packages(),
     install_requires=[
         'requests',
