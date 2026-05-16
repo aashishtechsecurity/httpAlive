@@ -1,6 +1,6 @@
 # httpAlive v2.0.0 🚀
 
-**httpAlive** is a high-performance, asynchronous web reconnaissance tool designed for security researchers and bug bounty hunters. It efficiently probes lists of subdomains and URLs to identify alive targets, extract metadata, and fingerprint technology stacks.
+**httpAlive** is a high-performance, asynchronous web reconnaissance tool designed for security researchers and bug bounty hunters. It efficiently probes lists of subdomains and URLs to identify alive targets, extract metadata, fingerprint technology stacks, and detect WAF protection.
 
 ---
 
@@ -8,84 +8,108 @@
 
 ## 🛠️ Key Features
 
-- **Blazing Fast**: Built on `asyncio` and `httpx` for high-concurrency probing.
-- **Memory Efficient**: Uses a worker-pool architecture to handle millions of URLs with minimal RAM usage.
-- **Tech Fingerprinting**: Automatically detects CMS (WordPress, Drupal), Frameworks (React, Next.js), and Web Servers.
-- **Rich Metadata**: Extracts HTML Page Titles, resolves **IP Addresses**, and follows redirects.
-- **WAF Detection**: Identifies if a target is protected by Cloudflare, Akamai, AWS WAF, and more.
-- **Flexible Filtering**: Match or hide specific HTTP status codes (e.g., `-mc 200` or `-hc 404`).
-- **Professional Exports**: Save results in **Text**, **JSON**, or **CSV** formats.
-- **Custom Headers**: Pass custom cookies or authorization tokens via the `-H` flag.
+- **Blazing Fast**: Powered by `asyncio` and `httpx` for extreme concurrency.
+- **Memory Efficient**: Uses a producer-consumer worker pool to handle millions of targets with negligible RAM usage.
+- **Tech Fingerprinting**: Detects CMS (WordPress, Drupal), Frameworks (React, Next.js), and Web Servers.
+- **WAF Detection**: Identifies protection layers like **Cloudflare**, **Akamai**, **AWS WAF**, **Imperva**, and more.
+- **Asynchronous DNS**: Resolves IP addresses concurrently with HTTP probing.
+- **Flexible Piping**: Seamlessly integrates into your existing recon pipeline via `stdin`.
+- **Professional Exports**: Multi-format support for **Text**, **JSON (Line-delimited)**, and **CSV**.
+- **Real-time Dashboard**: Live-updating UI with progress bars and statistics using `rich`.
 
 ---
 
-## 🏗️ Architecture & How It Works
+## 🏗️ Architecture: The Async Worker Pool
 
-### Asynchronous Worker Pool (Senior Design)
-Unlike traditional tools that create a thread for every URL, **httpAlive** utilizes a **Producer-Consumer pattern**:
+Unlike traditional multi-threaded tools that suffer from high context-switching overhead, **httpAlive** uses a single-threaded event loop with an asynchronous worker pool:
 
-1.  **Producer**: Reads URLs from your input file line-by-line and feeds them into an `asyncio.Queue`.
-2.  **Worker Pool**: A fixed number of asynchronous workers (controlled by `--concurrency`) pull URLs from the queue.
-3.  **Connection Pooling**: Uses `httpx.AsyncClient` with custom limits to reuse TCP connections, reducing overhead and avoiding socket exhaustion.
-
-This architecture ensures that the tool remains responsive and stable even when scanning massive datasets.
+1.  **Queue System**: URLs are fed into an `asyncio.Queue` (either from a file or `stdin`).
+2.  **Worker Pool**: A set number of workers (default: 50) pull from the queue and perform non-blocking I/O.
+3.  **Connection Pooling**: Reuses TCP connections via `httpx.Limits` to maximize speed and minimize socket exhaustion.
 
 ---
 
 ## 🚀 Installation
 
-### Prerequisites
-- Python 3.8+
-- pip
-
-### Setup
+### Using Git (Recommended for Developers)
 ```bash
 git clone https://github.com/aashishtechsecurity/httpAlive.git
 cd httpAlive
 pip install -r requirements.txt
 ```
 
+### Global Installation
+You can install it globally to use the `httpAlive` command anywhere:
+```bash
+pip install .
+```
+
 ---
 
 ## 📖 Usage Guide
 
-### Basic Probing
+### 1. Basic Usage
+Read from a file and save to default `httpAlive_output.txt`:
 ```bash
-python ./httpAlive/httpAlive.py -l subdomains.txt
+python httpAlive.py -l subdomains.txt
 ```
 
-### Advanced Filtering & Export
-Find only valid pages (200 OK) and save to JSON and CSV:
+### 2. Piping (The Bug Bounty Workflow)
+Integrate with other tools like `subfinder` or `assetfinder`:
 ```bash
-python ./httpAlive/httpAlive.py -l list.txt -mc 200 -j results.json --csv results.csv
+subfinder -d example.com -silent | python httpAlive.py -mc 200 -j alive.json
 ```
 
-### Authenticated Scanning (Custom Headers)
+### 3. Advanced Filtering
+Match specific status codes and exclude others:
 ```bash
-python ./httpAlive/httpAlive.py -l list.txt -H "Cookie: session=123" -H "X-Forwarded-For: 127.0.0.1"
+# Only find 200 OK and 302 Redirects, ignore 404s
+python httpAlive.py -l targets.txt -mc 200,302 -hc 404
 ```
 
-### Full Options
-| Flag | Description | Default |
-|------|-------------|---------|
-| `-l, --list` | File containing list of URLs | **Required** |
-| `-c, --concurrency` | Number of concurrent workers | `50` |
-| `-o, --output` | Text output file | `httpAlive_output.txt` |
-| `-j, --json` | JSON output file | `None` |
-| `--csv` | CSV output file | `None` |
-| `-mc, --match-code` | Match specific status codes | `All` |
-| `-hc, --hide-code` | Hide specific status codes | `None` |
-| `-H, --header` | Add custom header (can use multiple) | `None` |
-| `-t, --timeout` | Request timeout in seconds | `10` |
+### 4. Custom Headers & Auth
+```bash
+python httpAlive.py -l list.txt -H "Cookie: session=xyz" -H "User-Agent: MyCustomScanner"
+```
 
 ---
 
-## 🔍 Technology & WAF Detection
-The tool identifies stacks and protection layers using:
+## 📊 Output Formats
+
+### JSON Output (`-j results.json`)
+Results are saved as line-delimited JSON (JSONL) for easy parsing with `jq`:
+```json
+{"url": "example.com", "ip": "93.184.216.34", "status": 200, "size": 1256, "server": "ECS", "title": "Example Domain", "tech": ["Nginx"], "final_url": "https://example.com/"}
+```
+
+### CSV Output (`--csv results.csv`)
+Standard CSV structure for spreadsheet analysis:
+`URL, IP Address, Status, Size, Server, Title, Tech, Final URL`
+
+---
+
+## 🔍 Technology & WAF Signatures
+The tool currently fingerprints:
 - **WAFs**: Cloudflare, Akamai, AWS WAF, Imperva, Sucuri, F5 BigIP.
 - **CMS**: WordPress, Shopify, Drupal, Joomla.
-- **Frameworks**: React, Angular, Vue.js, Next.js, Nuxt.js.
-- **Infrastructure**: Nginx, Apache, IIS, LiteSpeed.
+- **Frameworks**: React, Angular, Vue.js, Next.js, Nuxt.js, Laravel.
+- **Servers**: Nginx, Apache, IIS, LiteSpeed.
+
+---
+
+## ⚙️ Configuration Flags
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `-l, --list` | Input file (use `-` or omit for stdin) | `None` |
+| `-c, --concurrency` | Number of concurrent workers | `50` |
+| `-o, --output` | Text output file | `httpAlive_output.txt` |
+| `-j, --json` | JSON output file (JSONL format) | `None` |
+| `--csv` | CSV output file | `None` |
+| `-mc, --match-code` | List of status codes to match (e.g. 200,302) | `All` |
+| `-hc, --hide-code` | List of status codes to hide | `None` |
+| `-H, --header` | Custom header (can be repeated) | `None` |
+| `-t, --timeout` | Request timeout in seconds | `10` |
 
 ---
 
@@ -93,8 +117,6 @@ The tool identifies stacks and protection layers using:
 Distributed under the MIT License. See `LICENSE` for more information.
 
 ## 🤝 Contributing
-Contributions are what make the open-source community such an amazing place to learn, inspire, and create. Any contributions you make are **greatly appreciated**.
-
 1. Fork the Project
 2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
 3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
@@ -102,4 +124,6 @@ Contributions are what make the open-source community such an amazing place to l
 5. Open a Pull Request
 
 ---
-**Author**: [Bande Aashish](https://github.com/aashishtechsecurity)
+**Author**: [Bande Aashish](https://github.com/aashishtechsecurity)  
+**Support**: If you find this tool useful, give it a ⭐ on GitHub!
+
