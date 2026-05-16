@@ -1,4 +1,4 @@
-# httpAlive v1.1.0 🚀
+# httpAlive v2.0.0 🚀
 
 **httpAlive** is a high-performance, asynchronous web reconnaissance tool designed for security researchers and bug bounty hunters. It efficiently probes lists of subdomains and URLs to identify alive targets, extract metadata, and fingerprint technology stacks.
 

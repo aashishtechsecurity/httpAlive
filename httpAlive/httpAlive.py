@@ -11,13 +11,13 @@ from datetime import datetime
 import re
 import json
 from typing import List, Optional, Set, Dict
-
-import httpx
-from rich.console import Console
+from rich.live import Live
+from rich.table import Table
+from rich.console import Console, Group
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, MofNCompleteColumn, TimeElapsedColumn
 from rich.theme import Theme
-from rich.table import Table
+import httpx
 
 # Custom Theme for Security Tooling
 custom_theme = Theme({
@@ -42,7 +42,7 @@ USER_AGENTS = [
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1",
 ]
 
-VERSION = "1.1.0" # Removed 'v' prefix for easier comparison
+VERSION = "2.0.0"
 
 def get_banner():
     banner_text = f"""
@@ -138,6 +138,42 @@ def detect_tech(response: httpx.Response) -> List[str]:
     
     return sorted(list(set(detected)))
 
+class ScanStats:
+    """Track scan statistics for the live dashboard."""
+    def __init__(self):
+        self.total = 0
+        self.processed = 0
+        self.status_200 = 0
+        self.status_300 = 0
+        self.status_400 = 0
+        self.errors = 0
+        self.start_time = time.time()
+
+    @property
+    def rps(self):
+        elapsed = time.time() - self.start_time
+        return self.processed / elapsed if elapsed > 0 else 0
+
+def generate_stats_table(stats: ScanStats) -> Table:
+    """Generate a rich table for the live dashboard."""
+    table = Table(show_header=True, header_style="bold magenta", box=None, expand=True)
+    table.add_column("Processed", justify="center")
+    table.add_column("2xx OK", justify="center", style="green")
+    table.add_column("3xx Redir", justify="center", style="yellow")
+    table.add_column("4xx/5xx", justify="center", style="red")
+    table.add_column("Errors", justify="center", style="dim red")
+    table.add_column("Speed", justify="center", style="cyan")
+    
+    table.add_row(
+        f"{stats.processed}/{stats.total}",
+        str(stats.status_200),
+        str(stats.status_300),
+        str(stats.status_400),
+        str(stats.errors),
+        f"{stats.rps:.1f} req/s"
+    )
+    return table
+
 async def get_ip(hostname: str) -> str:
     """Resolve hostname to IP address asynchronously."""
     try:
@@ -161,6 +197,7 @@ async def probe_url(
     csv_output: Optional[str],
     progress, 
     task_id,
+    stats: ScanStats,
     filter_status: Optional[Set[int]] = None,
     hide_status: Optional[Set[int]] = None,
     custom_headers: Optional[Dict[str, str]] = None
@@ -230,23 +267,30 @@ async def probe_url(
                 writer = csv.writer(f)
                 writer.writerow([url, ip_address, status, size, server, title, ",".join(tech), str(response.url)])
                 
+        # Update Stats
+        stats.processed += 1
+        if 200 <= status < 300: stats.status_200 += 1
+        elif 300 <= status < 400: stats.status_300 += 1
+        else: stats.status_400 += 1
+
     except Exception:
+        stats.errors += 1
         pass
     finally:
         progress.update(task_id, advance=1)
 
-async def worker(queue, client, args, progress, task_id, filter_status, hide_status, custom_headers):
+async def worker(queue, client, args, progress, task_id, stats, filter_status, hide_status, custom_headers):
     """Worker task that processes URLs from the queue."""
     while True:
         url = await queue.get()
         try:
-            await probe_url(url, client, args.output, args.json, args.csv, progress, task_id, filter_status, hide_status, custom_headers)
+            await probe_url(url, client, args.output, args.json, args.csv, progress, task_id, stats, filter_status, hide_status, custom_headers)
         finally:
             queue.task_done()
 
 async def main():
     parser = argparse.ArgumentParser(description="httpAlive: Efficiently probe for alive subdomains and URLs.")
-    parser.add_argument('-l', '--list', required=True, help="File containing list of subdomains or URLs.")
+    parser.add_argument('-l', '--list', help="File containing list of subdomains or URLs. Use '-' for stdin.")
     parser.add_argument('-o', '--output', default="httpAlive_output.txt", help="File to save text results.")
     parser.add_argument('-j', '--json', help="File to save JSON results.")
     parser.add_argument('--csv', help="File to save CSV results.")
@@ -273,12 +317,21 @@ async def main():
     console.print(get_banner())
     await check_version()
     
-    try:
-        with open(args.list, 'r') as f:
-            urls = [line.strip() for line in f if line.strip()]
-    except FileNotFoundError:
-        console.print(f"[error]Error: File '{args.list}' not found.[/error]")
-        sys.exit(1)
+    # Handle Input (File or Stdin)
+    urls = []
+    if not args.list or args.list == '-':
+        if not sys.stdin.isatty():
+            urls = [line.strip() for line in sys.stdin if line.strip()]
+        else:
+            parser.print_help()
+            return
+    else:
+        try:
+            with open(args.list, 'r', encoding='utf-8') as f:
+                urls = [line.strip() for line in f if line.strip()]
+        except FileNotFoundError:
+            console.print(f"[error]Error: File {args.list} not found.[/error]")
+            return
 
     console.print(f"\n[bold info][*][/bold info] Starting at: [bold white]{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}[/bold white]")
     console.print(f"[bold info][*][/bold info] Target count: [bold yellow]{len(urls)}[/bold yellow]")
@@ -297,31 +350,52 @@ async def main():
             writer = csv.writer(f)
             writer.writerow(["URL", "IP Address", "Status", "Size", "Server", "Title", "Tech", "Final URL"])
 
+    stats = ScanStats()
+    stats.total = len(urls)
+
+    # Initialize UI components
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(bar_width=None),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+        console=console,
+        expand=True
+    )
+    task_id = progress.add_task("[cyan]Probing URLs...", total=len(urls))
+    
+    stats = ScanStats()
+    stats.total = len(urls)
+
     limits = httpx.Limits(max_keepalive_connections=20, max_connections=args.concurrency)
     
     async with httpx.AsyncClient(verify=False, timeout=args.timeout, limits=limits) as client:
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(bar_width=None),
-            MofNCompleteColumn(),
-            TimeElapsedColumn(),
-            console=console,
-            expand=True
-        ) as progress:
-            
-            task_id = progress.add_task("[cyan]Probing URLs...", total=len(urls))
-            
-            queue = asyncio.Queue()
-            for url in urls:
-                queue.put_nowait(url)
-            
+        queue = asyncio.Queue()
+        for url in urls:
+            queue.put_nowait(url)
+        
+        # Combine Progress and Stats into a single group for the Live display
+        ui_group = Group(
+            progress,
+            generate_stats_table(stats)
+        )
+        
+        with Live(ui_group, console=console, refresh_per_second=4) as live:
             # Start workers
             workers = [
-                asyncio.create_task(worker(queue, client, args, progress, task_id, filter_status, hide_status, custom_headers))
+                asyncio.create_task(worker(queue, client, args, progress, task_id, stats, filter_status, hide_status, custom_headers))
                 for _ in range(args.concurrency)
             ]
             
+            while not queue.empty() or any(not w.done() for w in workers):
+                # Refresh the UI group
+                ui_group = Group(progress, generate_stats_table(stats))
+                live.update(ui_group)
+                await asyncio.sleep(0.1)
+                if queue.empty() and all(w.done() for w in workers):
+                    break
+
             await queue.join()
             for w in workers:
                 w.cancel()

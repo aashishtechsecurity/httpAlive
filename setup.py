@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='httpAlive',
-    version='1.1.0',
+    version='2.0.0',
     description='HttpAlive is a web probing tool designed for discovering alive subdomains and URLs.',
     author='Bande Aashish',
     url='https://github.com/aashishtechsecurity/httpAlive',
