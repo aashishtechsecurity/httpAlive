@@ -7,7 +7,8 @@ import sys
 import time
 from datetime import datetime
 import re
-from typing import List, Optional, Set
+import json
+from typing import List, Optional, Set, Dict
 
 import httpx
 from rich.console import Console
@@ -39,7 +40,7 @@ USER_AGENTS = [
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1",
 ]
 
-VERSION = "v1.1.0"
+VERSION = "1.1.0" # Removed 'v' prefix for easier comparison
 
 def get_banner():
     banner_text = f"""
@@ -63,11 +64,16 @@ async def check_version():
             response = await client.get(url)
             if response.status_code == 200:
                 data = response.json()
-                latest = data.get('name', '')
-                if latest == VERSION:
-                    console.print(f"[info]●[/info] [bold white]Status:[/bold white] [success]Up to date ({VERSION})[/success]")
+                latest = data.get('tag_name', '').lstrip('v')
+                
+                # Basic semantic versioning check
+                curr_v = [int(x) for x in VERSION.split('.')]
+                late_v = [int(x) for x in latest.split('.')]
+                
+                if late_v > curr_v:
+                    console.print(f"[info]●[/info] [bold white]Status:[/bold white] [warning]Update available: v{latest}[/warning]")
                 else:
-                    console.print(f"[info]●[/info] [bold white]Status:[/bold white] [warning]Update available: {latest}[/warning]")
+                    console.print(f"[info]●[/info] [bold white]Status:[/bold white] [success]Up to date (v{VERSION})[/success]")
     except Exception:
         pass
 
@@ -82,74 +88,65 @@ def extract_title(html: str) -> str:
     return "N/A"
 
 def detect_tech(response: httpx.Response) -> List[str]:
-    """Basic fingerprinting for web technologies."""
+    """Extensible fingerprinting using signatures."""
     detected = []
     headers = response.headers
     html = response.text.lower()
     cookies = str(response.cookies).lower()
     
-    # 1. Header Analysis
-    server = headers.get('Server', '').lower()
-    if 'nginx' in server: detected.append("Nginx")
-    elif 'apache' in server: detected.append("Apache")
-    elif 'litespeed' in server: detected.append("LiteSpeed")
-    elif 'microsoft-iis' in server: detected.append("IIS")
-    elif 'cloudflare' in server: detected.append("Cloudflare")
+    signatures = {
+        "Nginx": {"header": ("Server", "nginx")},
+        "Apache": {"header": ("Server", "apache")},
+        "LiteSpeed": {"header": ("Server", "litespeed")},
+        "IIS": {"header": ("Server", "microsoft-iis")},
+        "Cloudflare": {"header": ("Server", "cloudflare")},
+        "PHP": {"header": ("X-Powered-By", "php"), "cookie": "phpsessid"},
+        "ASP.NET": {"header": ("X-Powered-By", "asp.net")},
+        "Express.js": {"header": ("X-Powered-By", "express")},
+        "WordPress": {"body": "wp-content"},
+        "Drupal": {"body": "drupal", "header": ("X-Generator", "drupal")},
+        "Joomla": {"body": "joomla"},
+        "Shopify": {"body": "shopify"},
+        "Next.js": {"body": "_next/static"},
+        "Nuxt.js": {"body": "nuxt"},
+        "React": {"body": "react"},
+        "Angular": {"body": "angular"},
+        "Vue.js": {"body": "vue"},
+        "Laravel": {"cookie": "laravel_session"},
+        "Java/JSP": {"cookie": "jsessionid"},
+    }
+
+    for tech, sig in signatures.items():
+        if "header" in sig:
+            h_key, h_val = sig["header"]
+            if h_val in headers.get(h_key, '').lower():
+                detected.append(tech)
+        if "body" in sig and sig["body"] in html:
+            detected.append(tech)
+        if "cookie" in sig and sig["cookie"] in cookies:
+            detected.append(tech)
     
-    powered_by = headers.get('X-Powered-By', '').lower()
-    if 'php' in powered_by: detected.append("PHP")
-    elif 'asp.net' in powered_by: detected.append("ASP.NET")
-    elif 'express' in powered_by: detected.append("Express.js")
-    
-    # 2. CMS & Platform Patterns
-    if 'wp-content' in html or 'wordpress' in html: detected.append("WordPress")
-    if 'drupal' in html: detected.append("Drupal")
-    if 'joomla' in html: detected.append("Joomla")
-    if 'shopify' in html: detected.append("Shopify")
-    if 'squarespace' in html: detected.append("Squarespace")
-    
-    # 3. Frontend Frameworks
-    if '_next/static' in html: detected.append("Next.js")
-    if 'nuxt' in html: detected.append("Nuxt.js")
-    if 'react' in html: detected.append("React")
-    if 'angular' in html: detected.append("Angular")
-    if 'vue' in html: detected.append("Vue.js")
-    
-    # 4. Miscellaneous
-    if 'drupal' in headers.get('X-Generator', '').lower(): detected.append("Drupal")
-    if 'laravel_session' in cookies: detected.append("Laravel")
-    if 'phpsessid' in cookies: detected.append("PHP")
-    if 'jsessionid' in cookies: detected.append("Java/JSP")
-    
-    # Deduplicate and limit
     return sorted(list(set(detected)))
 
 async def probe_url(
     url: str, 
     client: httpx.AsyncClient, 
     output_file: Optional[str], 
+    json_output: Optional[str],
     progress, 
     task_id,
     filter_status: Optional[Set[int]] = None,
     hide_status: Optional[Set[int]] = None
 ) -> None:
-    # Ensure URL has protocol
     target = url if url.startswith(('http://', 'https://')) else f"http://{url}"
-    
     headers = {"User-Agent": random.choice(USER_AGENTS)}
     
     try:
-        # We don't follow redirects here so we can see the hop info, 
-        # but for simplicity in "is it alive", following is fine.
-        # Let's track redirects if they happen.
         response = await client.get(target, headers=headers, follow_redirects=True)
         status = response.status_code
         
-        # Filtering logic
-        if filter_status and status not in filter_status:
-            return
-        if hide_status and status in hide_status:
-            return
+        if filter_status and status not in filter_status: return
+        if hide_status and status in hide_status: return
 
         size = response.headers.get('Content-Length', len(response.content))
         server = response.headers.get('Server', 'N/A')
@@ -157,27 +154,36 @@ async def probe_url(
         tech = detect_tech(response)
         tech_str = f"[bold magenta][{','.join(tech)}][/]" if tech else ""
         
-        # Track if it was a redirect
         redirect_info = ""
         if len(response.history) > 0:
-            final_url = str(response.url)
-            redirect_info = f" [yellow]→[/][italic white] {final_url}[/]"
+            redirect_info = f" [yellow]→[/][italic white] {str(response.url)}[/]"
 
-        # Color coding status codes
         status_style = "status_200" if 200 <= status < 300 else "status_300" if 300 <= status < 400 else "status_400"
         
         result_text = f"[{status_style}](Status: {status})[/] --[Size: {size}]--[Server: {server}]--[Title: {title}] {tech_str}---> [url]{url}[/url]{redirect_info}"
         console.print(result_text)
         
+        # Save to Text
         if output_file:
             with open(output_file, 'a', encoding='utf-8') as f:
                 tech_log = f"[{','.join(tech)}]" if tech else ""
                 f.write(f"(Status: {status}) --[Size: {size}]--[Server: {server}]--[Title: {title}] {tech_log}---> {url}{' -> ' + str(response.url) if redirect_info else ''}\n")
+        
+        # Save to JSON
+        if json_output:
+            result_data = {
+                "url": url,
+                "status": status,
+                "size": size,
+                "server": server,
+                "title": title,
+                "tech": tech,
+                "final_url": str(response.url) if redirect_info else url
+            }
+            with open(json_output, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(result_data) + "\n")
                 
-    except (httpx.TimeoutException, httpx.ConnectError):
-        pass 
-    except Exception as e:
-        # Uncomment for debugging: console.print(f"[error]Error probing {url}: {str(e)}[/error]")
+    except Exception:
         pass
     finally:
         progress.update(task_id, advance=1)
@@ -185,7 +191,8 @@ async def probe_url(
 async def main():
     parser = argparse.ArgumentParser(description="httpAlive: Efficiently probe for alive subdomains and URLs.")
     parser.add_argument('-l', '--list', required=True, help="File containing list of subdomains or URLs.")
-    parser.add_argument('-o', '--output', default="httpAlive_output.txt", help="File to save results.")
+    parser.add_argument('-o', '--output', default="httpAlive_output.txt", help="File to save text results.")
+    parser.add_argument('-j', '--json', help="File to save JSON results.")
     parser.add_argument('-c', '--concurrency', type=int, default=50, help="Concurrency level (default: 50).")
     parser.add_argument('-t', '--timeout', type=int, default=10, help="Timeout per request (default: 10s).")
     parser.add_argument('-mc', '--match-code', help="Match specific status codes (e.g., 200,301).")
@@ -212,10 +219,13 @@ async def main():
     console.print(f"[bold info][*][/bold info] Concurrency : [bold yellow]{args.concurrency}[/bold yellow]\n")
     console.print("-" * 60)
 
-    # Clear output file if it exists or create new
+    # Clear output files
     if args.output:
         with open(args.output, 'w', encoding='utf-8') as f:
             f.write(f"# httpAlive Scan - {datetime.now()}\n")
+    if args.json:
+        with open(args.json, 'w', encoding='utf-8') as f:
+            pass # Clear JSON file
 
     limits = httpx.Limits(max_keepalive_connections=20, max_connections=args.concurrency)
     
@@ -237,13 +247,16 @@ async def main():
             
             async def bounded_probe(url):
                 async with semaphore:
-                    await probe_url(url, client, args.output, progress, task_id, filter_status, hide_status)
+                    await probe_url(url, client, args.output, args.json, progress, task_id, filter_status, hide_status)
             
             tasks = [bounded_probe(url) for url in urls]
             await asyncio.gather(*tasks)
 
     console.print("-" * 60)
-    console.print(f"[bold success][+][/bold success] Scan complete. Results saved to: [bold white]{args.output}[/bold white]")
+    output_msg = f"[bold success][+][/bold success] Scan complete."
+    if args.output: output_msg += f" Text: [bold white]{args.output}[/bold white]"
+    if args.json: output_msg += f" JSON: [bold white]{args.json}[/bold white]"
+    console.print(output_msg)
     console.print(f"[bold success][+][/bold success] Finished at: [bold white]{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}[/bold white]")
 
 if __name__ == "__main__":
